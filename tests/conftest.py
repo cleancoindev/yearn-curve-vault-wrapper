@@ -10,7 +10,7 @@ def gov(accounts):
 
 
 @pytest.fixture
-def affiliate(accounts):
+def user(accounts):
     yield accounts[1]
 
 
@@ -41,14 +41,14 @@ def token(pm, gov):
 
 
 @pytest.fixture
-def affiliate_token(token, affiliate, registry, AffiliateToken):
+def curve_vault_wrapper(token, gov, registry, CurveVaultWrapper):
     # Affliate Wrapper
-    yield affiliate.deploy(
-        AffiliateToken,
+    yield gov.deploy(
+        CurveVaultWrapper,
         token,
         registry,
-        f"Affiliate {token.symbol()}",
-        f"af{token.symbol()}",
+        f"Yearn vault wrapper {token.symbol()}",
+        f"Yvw{token.symbol()}",
     )
 
 

@@ -4,8 +4,11 @@ pragma solidity ^0.6.12;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {VaultAPI, BaseWrapper} from "@yearnvaults/contracts/BaseWrapper.sol";
+import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 
-contract AffiliateToken is ERC20, BaseWrapper {
+contract CurveVaultWrapper is ERC20, BaseWrapper {
+    using SafeMath for uint256;
+
     /// @notice The EIP-712 typehash for the contract's domain
     bytes32 public constant DOMAIN_TYPEHASH =
         keccak256(
@@ -22,12 +25,17 @@ contract AffiliateToken is ERC20, BaseWrapper {
     /// @notice A record of states for signing / validating signatures
     mapping(address => uint256) public nonces;
 
-    address public affiliate;
+    address public governance;
 
-    address public pendingAffiliate;
+    address public pendingGovernance;
+    uint256 public lastReport;
 
-    modifier onlyAffiliate() {
-        require(msg.sender == affiliate);
+    uint256 constant MAX_BPS = 10_000; // 100%, or 10k basis points
+    uint256 constant SECS_PER_YEAR = 31_556_952; // 365.2425 days
+    uint256 public managementFee = 200; // 2% per year
+
+    modifier onlyGovernance() {
+        require(msg.sender == governance);
         _;
     }
 
@@ -46,7 +54,8 @@ contract AffiliateToken is ERC20, BaseWrapper {
                 address(this)
             )
         );
-        affiliate = msg.sender;
+        lastReport = block.timestamp;
+        governance = msg.sender;
         _setupDecimals(uint8(ERC20(address(token)).decimals()));
     }
 
@@ -58,13 +67,13 @@ contract AffiliateToken is ERC20, BaseWrapper {
         return chainId;
     }
 
-    function setAffiliate(address _affiliate) external onlyAffiliate {
-        pendingAffiliate = _affiliate;
+    function setGovernance(address _governance) external onlyGovernance {
+        pendingGovernance = _governance;
     }
 
-    function acceptAffiliate() external {
-        require(msg.sender == pendingAffiliate);
-        affiliate = msg.sender;
+    function acceptGovernance() external {
+        require(msg.sender == pendingGovernance);
+        governance = msg.sender;
     }
 
     function _shareValue(uint256 numShares) internal view returns (uint256) {
@@ -99,6 +108,7 @@ contract AffiliateToken is ERC20, BaseWrapper {
     }
 
     function deposit(uint256 amount) public returns (uint256 deposited) {
+        _assessFees();
         uint256 shares = _sharesForValue(amount); // NOTE: Must be calculated before deposit is handled
         deposited = _deposit(msg.sender, address(this), amount, true); // `true` = pull from `msg.sender`
         _mint(msg.sender, shares);
@@ -109,24 +119,49 @@ contract AffiliateToken is ERC20, BaseWrapper {
     }
 
     function withdraw(uint256 shares) public returns (uint256) {
+        _assessFees();
         _burn(msg.sender, shares);
         return _withdraw(address(this), msg.sender, _shareValue(shares), true); // `true` = withdraw from `bestVault`
     }
 
-    function migrate() external onlyAffiliate returns (uint256) {
+    function migrate() external onlyGovernance returns (uint256) {
         return _migrate(address(this));
     }
 
-    function migrate(uint256 amount) external onlyAffiliate returns (uint256) {
+    function migrate(uint256 amount) external onlyGovernance returns (uint256) {
         return _migrate(address(this), amount);
     }
 
     function migrate(uint256 amount, uint256 maxMigrationLoss)
         external
-        onlyAffiliate
+        onlyGovernance
         returns (uint256)
     {
         return _migrate(address(this), amount, maxMigrationLoss);
+    }
+
+    function _assessFees() internal {
+        if (totalSupply() == 0) {
+            // Do not assesFees before the first deposit.
+            lastReport = block.timestamp;
+            return;
+        }
+
+        uint256 governance_fee =
+            totalSupply()
+                .mul(block.timestamp.sub(lastReport))
+                .mul(managementFee)
+                .div(MAX_BPS)
+                .div(SECS_PER_YEAR);
+
+        if (governance_fee != 0) {
+            _mint(governance, governance_fee);
+            lastReport = block.timestamp;
+        }
+    }
+
+    function setManagementFee(uint256 _fee) external onlyGovernance {
+        managementFee = _fee;
     }
 
     /**
